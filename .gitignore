@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+workspace/agent_state.db
+workspace/papers/*.pdf
+workspace/project/
+workspace/artifacts/*.md
+workspace/logs/*
+workspace/checkpoints/*
+.DS_Store
