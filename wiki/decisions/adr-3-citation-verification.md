@@ -1,55 +1,41 @@
 ---
-title: ADR-3 — Citation verification (fuzzy substring match)
+title: "ADR-3 — Citation verification (fuzzy substring match)"
 type: decision
-status: accepted
+status: superseded
 date: 2026-05-20
+superseded_by: adr-7-three-tier-citation-verify
 sources: [README.md]
-updated: 2026-05-20
+updated: 2026-05-27
 ---
 
 # ADR-3 — Citation verification
 
 ## Status
 
-Accepted. Specific mechanism inside the default-fail evaluator.
+**Superseded by [[decisions/adr-7-three-tier-citation-verify]] (2026-05-27).**
 
-## Context
+Original framing assumed fuzzy substring + possible Levenshtein. Actual implementation is a 3-tier cascade with no Levenshtein. ADR-7 captures the real mechanism. Keep this page as historical context.
 
-LLMs hallucinate quotes routinely — especially on technical papers where exact wording matters. Without checking, a summary's `citations[]` is often fabricated.
+## Context (historical)
 
-## Decision
+LLMs hallucinate quotes routinely. Default-fail evaluator needs a structural check on `summary.citations[]`.
 
-For every quote in `summary.citations[]`:
-1. Normalize whitespace + punctuation + case in both the quote and the source PDF text.
-2. Fuzzy substring match against normalized source text.
-3. If no match → fail with reason `citation_not_found: "<quote excerpt>"`.
+## Decision (original framing — wrong)
 
-Worker retries up to 3 times.
+- "Normalize whitespace + punctuation + case. Fuzzy substring match. Maybe Levenshtein distance threshold."
 
-## Consequences
+## Why superseded
 
-**Positive:**
-- Fabricated citations caught.
-- Forces worker to quote real text (or omit citations).
-- Trust in final report's evidence chain.
+Source (`pdf_tools.py:90`) implements:
+1. Whitespace-normalized substring (≥ 8 chars).
+2. Alphanumeric-fingerprint substring (≥ 30 chars).
+3a. Head(40) + tail(40) fingerprint anchors (≥ 80 fp chars).
+3b. 60-char sliding fingerprint window (stride 10, ≥ 60 fp chars).
 
-**Negative:**
-- Fuzzy normalization isn't perfect — true positives may slip through with heavy edits.
-- Whitespace + hyphenation in PDF text extract may cause false negatives (PDF "long-running" → text "longrunning" or "long running").
-- Worker may produce summaries with no citations to avoid the check.
-
-## Implementation notes
-
-- Use `unicodedata.normalize` + collapse whitespace + strip punctuation.
-- Substring match (don't require exact alignment).
-- Maybe Levenshtein distance threshold for short citations.
-
-## References
-
-- README §"Evaluator rigor"
+No edit-distance check anywhere. Mechanism is anchor-and-window based, not distance-based.
 
 ## Related
 
-- [[modules/evaluator]]
-- [[modules/pdf-tools]] — source text extractor
+- [[decisions/adr-7-three-tier-citation-verify]] (current)
+- [[modules/pdf-tools]]
 - [[decisions/adr-2-default-fail-evaluator]]

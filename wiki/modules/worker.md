@@ -4,45 +4,64 @@ type: module
 tags: [worker, llm, dispatch]
 language: python
 entry_point: app/worker.py
-updated: 2026-05-20
+updated: 2026-05-27
 ---
 
 # Worker
 
-Task-type dispatcher. Runs ONE task at a time. Each task type has a different execution path; all share sandboxed file ops + LLM access.
+Task-type dispatcher. Runs one task at a time. Returns an `Artifact` (changed/failed/remaining/evidence). Writes go through [[modules/sandbox]] (workspace-only).
 
-## Responsibility
+## Dispatch table (worker.py:24)
 
-Owns: per-task execution. For each task type:
+```python
+{
+  "collect_papers":     _collect_papers,
+  "extract_text":       _extract_text,
+  "summarize_fanout":   _fanout_placeholder,
+  "summarize_paper":    _summarize_paper,
+  "compare_methods":    _compare_methods,
+  "identify_patterns":  _identify_patterns,
+  "write_report":       _write_report,
+  "export_pdf":         _export_pdf,
+}
+```
 
-| Task type | What worker does | Tools used |
-|---|---|---|
-| T1 collect | Fetches papers from arXiv if `workspace/papers/` underfull | [[modules/arxiv-client]] |
-| T2 extract | PDF → text + metadata | [[modules/pdf-tools]] |
-| T3.N summarize | LLM call: paper text → `summary.json` (Pydantic-validated) | [[modules/llm-wrapper]] + [[modules/schemas]] |
-| T4 compare | LLM call: N summaries → `comparison.md` | LLM |
-| T5 patterns | LLM call: comparison → `patterns.md` | LLM |
-| T6 final report | LLM call: all artifacts → `FINAL_REPORT.md` (HUMAN APPROVAL GATE) | LLM + [[modules/approval]] |
-| T7 export | Render `FINAL_REPORT.md` → `FINAL_REPORT.pdf` | [[modules/pdf-tools]] |
+T7 dispatch wired 2026-05-27. See [[decisions/adr-8-t7-wiring]].
+
+## Per-handler summary
+
+| Handler | Input | LLM | Output |
+|---|---|---|---|
+| `_collect_papers` | `workspace/papers/*.pdf` count + ARXIV_QUERY | — | `paper_index.json`, possibly arXiv downloads |
+| `_extract_text` | `paper_index.json` | — | `papers/<id>/raw.txt`, `papers/<id>/meta.json` via [[modules/pdf-tools]] |
+| `_fanout_placeholder` | — | — | empty artifact; harness handles fan-out |
+| `_summarize_paper` | `papers/<pid>/raw.txt[:60000]` | Sonnet (`SUMMARIZE_SYSTEM`) | `papers/<pid>/summary.json` (PaperSummary-validated) |
+| `_compare_methods` | all `papers/<id>/summary.json` | Sonnet (`COMPARE_SYSTEM`) | `comparison.md` w/ 3 required H2 sections |
+| `_identify_patterns` | summaries + `comparison.md` | Sonnet (`PATTERNS_SYSTEM`) | `patterns.md` |
+| `_write_report` | summaries + comparison + patterns | Sonnet (`REPORT_SYSTEM`, max_tokens=16000) | `FINAL_REPORT.md` w/ 5 H2 sections |
+| `_export_pdf` | `FINAL_REPORT.md` | — | `FINAL_REPORT.pdf` via WeasyPrint |
+
+## Citation discipline (SUMMARIZE_SYSTEM)
+
+Worker is instructed to produce **≥ 3 exact verbatim quotes (30-200 chars each)** in `citations[]`. Evaluator enforces ≥ 3 + `verify_citation` pass.
+
+## Truncation guard
+
+Raw text truncated at 60000 chars before passing to Sonnet (worker.py:186). No chunked summarization for long papers.
 
 ## Public Interface
 
 ```python
-from app.worker import run
-artifact = run(task: Task) -> Artifact
+from app.worker import run_worker
+artifact: Artifact = run_worker(task)
 ```
-
-## Constraints
-
-- File ops MUST go through [[modules/sandbox]] (writes restricted to `workspace/project/`).
-- LLM access via [[modules/llm-wrapper]] (Sonnet by default).
-
-## LLM
-
-- **Worker model:** Sonnet via OpenRouter (override via `WORKER_MODEL` env).
 
 ## Related
 
 - [[modules/main-harness]] — caller
-- [[modules/evaluator]] — judges worker output
-- [[modules/sandbox]] — file op safety
+- [[modules/evaluator]] — judges output
+- [[modules/sandbox]] — file ops
+- [[modules/llm-wrapper]] — `call_llm` / `call_llm_json`
+- [[modules/pdf-tools]] — T2 + T7 backends
+- [[modules/arxiv-client]] — T1 backend
+- [[decisions/adr-8-t7-wiring]]

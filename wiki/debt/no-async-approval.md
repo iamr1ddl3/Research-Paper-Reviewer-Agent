@@ -1,30 +1,47 @@
 ---
-title: T6 approval is stdin-only — blocks unattended runs
+title: T6 approval is stdin-only — partial answer via AUTO_APPROVE env
 type: debt
-severity: medium
-status: open
+severity: low
+status: accepted
 filed: 2026-05-20
+updated: 2026-05-27
 sources: [app/approval.py]
-updated: 2026-05-20
 ---
 
-# Stdin-only approval blocks unattended long-running
+# Stdin approval — accepted limitation, AUTO_APPROVE is the unattended escape hatch
 
-[[modules/approval]] prompts via stdin. Means: when T6 finishes, the process waits for a y/n keystroke. Long arXiv-fetching runs that take 30+ minutes can finish T1-T5 fine and then sit idle waiting for approval at T6.
+Downgraded from MEDIUM to LOW and status `open` → `accepted` on 2026-05-27. No code change — the design is intentional.
 
-## Impact
+## Current behavior
 
-- Not truly long-running unattended.
-- Lose the value of resume + checkpoint when blocked on synchronous input.
+`approval.request_approval` (app/approval.py:11):
 
-## Fix sketch
+```python
+if AUTO_APPROVE=1:        return True
+elif not stdin.isatty():  return False
+else:                     interactive y/n prompt on stdin
+```
 
-Async approval channel:
-- Slack DM: post `FINAL_REPORT.md` excerpt + thumbs-up/thumbs-down reactor.
-- Email: link to GitHub issue / form.
-- Web hook: hosted approval URL.
+Three modes:
+- **Interactive** (default): human types yes/no.
+- **Unattended trusted** (`AUTO_APPROVE=1`): T6 auto-approved, full pipeline runs hands-off.
+- **Unattended untrusted** (no TTY, no AUTO_APPROVE): denied, task escalates to `needs_human`, loop stops.
 
-Worker writes "awaiting approval" to memory; resume continues T7 once external system marks approved.
+## Why this is fine for now
+
+- **Coverage is binary by design.** Either a human supervises (interactive) or the run is trusted enough to skip review (AUTO_APPROVE). Adding a third "human will check later, but not in front of the terminal right now" mode requires real infrastructure (Slack / email / webhook) and isn't blocking any current use case.
+- **AUTO_APPROVE is logged.** When set, approval.py prints `[AUTO_APPROVE=1] Auto-approving T6: ...` — auditable in stdout + workspace/logs.
+- **Evaluator catches the failure modes that matter.** Required-fields + 3-tier citation verify catch the most-damaging T6 outputs (fabricated quotes, empty sections) before T6 even produces an artifact for approval.
+
+## Future option: file-based async gate
+
+If real async approval is later needed, the cheapest path is a file-based gate:
+
+1. Harness writes `workspace/approvals/<task_id>.pending` and returns False from `request_approval` (instead of escalating to `needs_human`).
+2. External system (cron, Slack bot, webhook handler) reads pending file, sends review somewhere, drops `<task_id>.approved` or `<task_id>.rejected` when human responds.
+3. Resume loop polls for `.approved` file on next pick.
+
+~30 lines. Not built today.
 
 ## Related
 

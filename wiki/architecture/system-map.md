@@ -1,81 +1,94 @@
 ---
 title: Research-Paper-Reviewer-Agent — System Map
 type: architecture
-updated: 2026-05-20
+updated: 2026-05-27
 ---
 
 # System Map
 
-**Long-running AI agent** that reviews research papers (arxiv or local PDF) and produces a synthesized technical report (Markdown + JSON + PDF). Built on a **Planner → Worker → Evaluator** harness with SQLite checkpointing + resume.
+**Long-running AI agent** that reviews research papers (arXiv or local PDFs) and produces a synthesized technical report (Markdown + PDF). Built on a **Planner → Worker → Evaluator** harness with SQLite checkpointing + resume.
 
 ## Components
 
 | Component | Role | Path |
 |---|---|---|
-| [[modules/main-harness]] | The harness loop — pick task, run worker, evaluate, checkpoint | `app/main.py` |
-| [[modules/planner]] | Goal → T1-T7 task graph (Sonnet via OpenRouter) | `app/planner.py` |
-| [[modules/worker]] | Task-type dispatcher, runs one task at a time (Sonnet via OpenRouter) | `app/worker.py` |
-| [[modules/evaluator]] | Default-fail judge with required-fields + citation verification (Opus via OpenRouter, fresh context) | `app/evaluator.py` |
-| [[modules/approval]] | Interactive human-approval gate for T6/T7 | `app/approval.py` |
-| [[modules/memory]] | SQLite state store (task graph, attempts, status) | `app/memory.py` |
-| [[modules/sandbox]] | Path-restricted file ops (workspace/project/ only) | `app/sandbox.py` |
-| [[modules/llm-wrapper]] | Anthropic SDK wrapper (despite OpenRouter usage per README) | `app/llm.py` |
-| [[modules/schemas]] | Pydantic models for tasks, summaries, evaluator output | `app/schemas.py` |
-| [[modules/arxiv-client]] | arXiv fetch — T1 task implementation | `app/arxiv_client.py` |
-| [[modules/pdf-tools]] | PDF text extract + final-report PDF export | `app/pdf_tools.py` |
-| [[modules/config]] | Env vars + path setup | `app/config.py` |
+| [[modules/main-harness]] | CLI + the harness loop. Also owns `pick_next_task` + fan-out trigger. | `app/main.py` |
+| [[modules/planner]] | **Deterministic** static T1..T6 task graph builder (no LLM) | `app/planner.py` |
+| [[modules/worker]] | Task-type dispatcher. Calls Sonnet for content tasks. | `app/worker.py` |
+| [[modules/evaluator]] | Deterministic checks for file-producing tasks; Opus LLM judge for content tasks. | `app/evaluator.py` |
+| [[modules/approval]] | Human gate on T6 + `AUTO_APPROVE=1` env override | `app/approval.py` |
+| [[modules/memory]] | SQLite tables: task_graph (singleton), artifacts, checkpoints, events | `app/memory.py` |
+| [[modules/sandbox]] | Path-restricted file ops (workspace-write, paper-read) | `app/sandbox.py` |
+| [[modules/llm-wrapper]] | OpenAI SDK pointed at OpenRouter. JSON-coerced + text-mode calls. | `app/llm.py` |
+| [[modules/schemas]] | Pydantic models (Task, TaskGraph, Artifact, EvaluationResult, PaperSummary) | `app/schemas.py` |
+| [[modules/arxiv-client]] | arXiv fetch (T1 backend, bypasses sandbox by design) | `app/arxiv_client.py` |
+| [[modules/pdf-tools]] | Column-aware PDF text extract + 3-tier citation verify + WeasyPrint export | `app/pdf_tools.py` |
+| [[modules/config]] | Env vars + path constants + hard caps | `app/config.py` |
+
+## Data models
+
+- [[data-models/task]] · [[data-models/task-graph]] · [[data-models/artifact]] · [[data-models/evaluation-result]] · [[data-models/paper-summary]]
 
 ## Boundaries
 
 **External systems consumed:**
-- **OpenRouter** (`api.openrouter.ai`) — LLM access via OpenAI-compatible endpoint. Routes to Sonnet (planner/worker) + Opus (evaluator).
-- **arXiv API** — paper fetch (`arxiv_client.py`).
-- **Filesystem** — `workspace/papers/` (input PDFs), `workspace/project/` (worker output), `workspace/artifacts/T*.md` (handoff notes), `workspace/checkpoints/` (resume state), `workspace/logs/`.
+- **OpenRouter** (`api.openrouter.ai`) via OpenAI SDK — `anthropic/claude-sonnet-4.5` (worker), `anthropic/claude-opus-4.1` (evaluator LLM-judge path). `PLANNER_MODEL` env exists but planner is deterministic — dead config.
+- **arXiv API** — paper fetch via `arxiv` PyPI package.
+- **Filesystem** — `workspace/papers/` (input PDFs), `workspace/project/` (worker output), `workspace/artifacts/T*.md` (handoff notes), `workspace/checkpoints/` (DB-backed), `workspace/agent_state.db` (SQLite).
 
 **External systems produced:**
-- `workspace/project/FINAL_REPORT.md` — final synthesized report
-- `workspace/project/FINAL_REPORT.pdf` — PDF export
-- `workspace/project/comparison.md`, `workspace/project/patterns.md` — intermediate artifacts
-- Per-paper `workspace/project/papers/<id>/summary.json`
+- `workspace/project/FINAL_REPORT.md` (T6)
+- `workspace/project/comparison.md` (T4), `workspace/project/patterns.md` (T5)
+- Per-paper: `workspace/project/papers/<id>/raw.txt` + `meta.json` (T2), `summary.json` (T3.N)
+- `workspace/project/paper_index.json` (T1)
+- `workspace/artifacts/<task_id>.md` per task — human-readable run log
+- `workspace/project/FINAL_REPORT.pdf` (T7) — wired 2026-05-27, see [[decisions/adr-8-t7-wiring]]
 
-## Task graph (T1..T7)
+## Task graph (planner output: T1..T7; T3 fans out at runtime)
 
-| ID | Title | Output | Owner |
+| ID | task_type | Owner | Output |
 |---|---|---|---|
-| T1 | Collect papers | `workspace/papers/*.pdf` (via arxiv_client or pre-supplied) | Worker |
-| T2 | Extract text + metadata | `papers/<id>/raw.txt`, `papers/<id>/meta.json` | Worker (uses pdf_tools) |
-| T3.N | Summarize paper N | `papers/<id>/summary.json` | Worker |
-| T4 | Compare methods across papers | `comparison.md` | Worker |
-| T5 | Identify repeated patterns | `patterns.md` | Worker |
-| T6 | Write final report | `FINAL_REPORT.md` — **requires human approval** | Worker + Approval |
-| T7 | Export PDF | `FINAL_REPORT.pdf` | Worker (pdf_tools) |
+| T1 | `collect_papers` | Worker → [[modules/arxiv-client]] | `paper_index.json` + `workspace/papers/*.pdf` |
+| T2 | `extract_text` | Worker → [[modules/pdf-tools]] | `papers/<id>/raw.txt` + `meta.json` |
+| T3 (placeholder) | `summarize_fanout` | Harness | replaced at runtime |
+| T3.1..T3.N | `summarize_paper` | Worker (Sonnet) → [[modules/pdf-tools]] verify | `papers/<id>/summary.json` |
+| T4 | `compare_methods` | Worker (Sonnet) | `comparison.md` with 3 required H2 sections |
+| T5 | `identify_patterns` | Worker (Sonnet) | `patterns.md` |
+| T6 | `write_report` | Worker (Sonnet, REPORT_MAX_TOKENS=16000) + **[[modules/approval]] gate** | `FINAL_REPORT.md` with 5 required H2 sections |
+| T7 | `export_pdf` | Worker → [[modules/pdf-tools]] WeasyPrint | `FINAL_REPORT.pdf` (size ≥ 1 KB) |
 
 ## Harness loop
 
 ```
-pick_next_task() → returns next pending or retryable task from SQLite
-  ↓
-worker.run(task) → executes task-type dispatch
-  ↓
-evaluator.judge(task, artifact) → pass | fail (with reason) | needs_human
-  ↓
-if pass: mark task done, checkpoint
-if fail: increment attempts (max 3), retry or escalate to needs_human
-if needs_human: pause for approval
-  ↓ loop until all tasks done OR escalation
+init_db()
+graph = load_task_graph() or planner.create_task_graph(goal)
+while True:
+  graph = _maybe_fanout(graph)            # inject T3.1..T3.N if T2 passed
+  task  = pick_next_task(graph)            # status ∈ {pending, failed} + deps passed
+  if task is None: break
+  if needs_approval(task.id):              # T6 only
+    if not request_approval(): status=needs_human; stop
+  task.status = "running"; task.attempts += 1
+  artifact = worker.run_worker(task)
+  evaluator.evaluate_task(task, artifact)
+  if passed: status = "passed"
+  elif attempts >= 3 or next_action == "human_review": status = "needs_human"; stop
+  else: status = "failed"                  # retried next pick
+  save_task_graph + save_checkpoint
 ```
 
 ## Safety + correctness primitives
 
-- **Default-fail evaluator** — passes only when required fields present + citations verifiable.
-- **Citation verification** — quotes in `summary.citations[]` must exist (fuzzy-normalized) in source PDF text. Fabricated quotes → fail.
-- **Sandboxed file ops** — Worker can only write under `workspace/project/`.
-- **Human gate on T6** — interactive approval before finalizing report.
-- **Attempt cap** — max 3 per task before escalation.
+- **Deterministic checks** for collect/extract/summarize/export — required files + non-empty + non-placeholder + ≥3 verified citations.
+- **3-tier citation verification** — whitespace-norm + alphanumeric fingerprint + head/tail anchors + 60-char sliding window. See [[decisions/adr-7-three-tier-citation-verify]].
+- **Column-aware PDF extraction** — preserves verbatim quote spans for 2-column papers. See [[decisions/adr-6-column-aware-pdf-extract]].
+- **Sandboxed worker writes** — workspace/project/ only, via `Path.relative_to` containment check.
+- **Human gate on T6** — interactive stdin, with `AUTO_APPROVE=1` env override.
+- **Attempt cap** — MAX_ATTEMPTS_PER_TASK = 3 (hardcoded), escalates to `needs_human`.
 
 ## Resume behavior
 
-`python -m app.main` (no `--goal`) reloads existing task graph from SQLite. All in-progress + failed tasks resume.
+`python -m app.main` (no `--goal`) reloads the singleton TaskGraph from SQLite. All `pending` and `failed` tasks resume. T3 fan-out idempotent across restarts.
 
 ## Open questions
 

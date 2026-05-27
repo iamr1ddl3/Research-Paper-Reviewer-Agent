@@ -4,35 +4,51 @@ type: module
 tags: [safety, sandbox]
 language: python
 entry_point: app/sandbox.py
-updated: 2026-05-20
+updated: 2026-05-27
 ---
 
 # Sandbox
 
-Path-restricted file operations. Worker writes go through this — restricted to `workspace/project/` subtree.
+Path-restricted file ops. Two roots — `WORKSPACE` (= `workspace/project/`) for writes/reads, `PAPERS` (= `workspace/papers/`) for read-only paper bytes.
 
 ## Responsibility
 
-Owns: file-op safety. Prevents the agent (even if hallucinating / prompt-injected) from writing outside the project workspace.
+Owns: file-op safety boundary. Resolves relative paths against the configured root, rejects anything that escapes.
 
-## Why this matters
+## Path check mechanism
 
-Without sandbox: LLM could be tricked into writing to `~/.ssh/`, `~/.bash_profile`, etc. Default-fail evaluator catches *quality* issues but not all *destructive* issues. Sandbox is the structural guarantee.
+```python
+def _safe(base: Path, relative_path: str) -> Path:
+    target = (base / relative_path).resolve()
+    try:
+        target.relative_to(base)
+    except ValueError:
+        raise ValueError(f"Blocked unsafe path access: {relative_path}")
+    return target
+```
+
+Uses `Path.relative_to` for component-level containment. Sibling directories with shared string prefixes (`/a/b/proj` vs `/a/b/project-evil`) are correctly rejected. Fixed 2026-05-27 — see [[debt/sandbox-startswith-prefix]].
 
 ## Public Interface
 
 ```python
-from app.sandbox import write_file, read_file, list_dir
-write_file("workspace/project/foo.md", content)  # OK
-write_file("/etc/passwd", content)              # ERROR
-write_file("../../../something", content)        # ERROR (resolves outside workspace)
+from app.sandbox import (
+    safe_workspace_path,   # → Path under WORKSPACE
+    safe_paper_path,       # → Path under PAPERS
+    write_file,            # writes under WORKSPACE only
+    read_workspace_file,   # reads under WORKSPACE; returns "" if absent
+    read_paper_file,       # reads under PAPERS as bytes
+    list_papers,           # sorted list of PAPERS/*.pdf
+    list_workspace,        # newline-joined relpaths under WORKSPACE
+)
 ```
 
-## Path resolution
+## Asymmetric write protection
 
-Probably: resolves to absolute path → checks `is_relative_to(workspace_root)` → reject if not. (Read source for exact mechanics.)
+`write_file` is workspace-only. **There is no write_paper_file.** Worker cannot write into `workspace/papers/` — only [[modules/arxiv-client]] writes there (via raw `result.download_pdf` to absolute path, bypassing sandbox).
 
 ## Related
 
-- [[modules/worker]] — sole consumer
+- [[modules/worker]] — primary consumer
+- [[modules/evaluator]] — uses `read_workspace_file` + `safe_workspace_path`
 - [[decisions/adr-4-sandbox-write-restriction]]

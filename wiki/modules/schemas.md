@@ -4,32 +4,44 @@ type: module
 tags: [schemas, pydantic]
 language: python
 entry_point: app/schemas.py
-updated: 2026-05-20
+updated: 2026-05-27
 ---
 
 # Schemas
 
-Pydantic models. Type-safe contracts for tasks, summaries, evaluator verdicts, etc.
+Pydantic v2 models. Five models + one Literal type. All persistence + LLM JSON validation routes through these.
 
-## Likely model set
+## Models
 
-Inferred from README + worker structure:
+| Model | Purpose | Page |
+|---|---|---|
+| `Task` | single task node (id, status, attempts, deps, task_type, paper_id) | [[data-models/task]] |
+| `TaskGraph` | `{goal, tasks: list[Task]}` | [[data-models/task-graph]] |
+| `Artifact` | worker output reference (changed/failed/remaining/evidence) | [[data-models/artifact]] |
+| `EvaluationResult` | judge verdict (passed, score, issues, next_action) | [[data-models/evaluation-result]] |
+| `PaperSummary` | per-paper summary (method/dataset/results/limitations/implementation_notes/citations) | [[data-models/paper-summary]] |
 
-- `Task` — single task in graph (id, type, deps, status, attempts, artifact_path)
-- `TaskGraph` — collection of Task nodes + edges
-- `PaperSummary` — per-paper output (method, dataset, results, limitations, implementation_notes, citations[])
-- `Citation` — quote + source location (page/section)
-- `Verdict` — evaluator output (status, reason)
-- `Artifact` — worker output reference (path + metadata)
+## TaskStatus literal
+
+```python
+TaskStatus = Literal["pending", "running", "passed", "failed", "needs_human"]
+```
+
+(Not `in_progress` / `done` / `fail` — those names were in the previous wiki and were wrong.)
 
 ## Public Interface
 
 ```python
-from app.schemas import Task, TaskGraph, PaperSummary, Verdict
+from app.schemas import Task, TaskGraph, Artifact, EvaluationResult, PaperSummary, TaskStatus
 ```
 
-Used everywhere: by [[modules/planner]] (constructs graph), [[modules/worker]] (validates LLM JSON output), [[modules/evaluator]] (parses verdicts), [[modules/memory]] (persists state).
+## Consumers
+
+- [[modules/planner]] — builds TaskGraph
+- [[modules/worker]] — constructs Artifact, validates PaperSummary from LLM JSON
+- [[modules/evaluator]] — emits EvaluationResult
+- [[modules/memory]] — persists Task/TaskGraph/Artifact as JSON
 
 ## Related
 
-- [[modules/planner]], [[modules/worker]], [[modules/evaluator]], [[modules/memory]]
+- [[modules/planner]] · [[modules/worker]] · [[modules/evaluator]] · [[modules/memory]]
