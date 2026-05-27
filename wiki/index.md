@@ -55,7 +55,7 @@ Master table of contents. Mapped 2026-05-20. Backtested + corrected 2026-05-27. 
 - [[decisions/adr-7-three-tier-citation-verify]] — current citation verify cascade
 - [[decisions/adr-8-t7-wiring]] — wire T7 (PDF export) into task graph + dispatch
 
-## Debt (6, 5 resolved/accepted, 0 open)
+## Debt (7, 5 resolved + 1 accepted + 1 mitigated)
 
 - [[debt/no-async-approval]] — LOW, **ACCEPTED 2026-05-27** — AUTO_APPROVE is the unattended escape hatch; async gate sketched as future option
 - [[debt/llm-wrapper-comment-stale]] — LOW, **RESOLVED 2026-05-27** — README rewritten
@@ -63,6 +63,7 @@ Master table of contents. Mapped 2026-05-20. Backtested + corrected 2026-05-27. 
 - [[debt/t7-dispatch-missing]] — HIGH, **RESOLVED 2026-05-27** — wired via ADR-8
 - [[debt/sandbox-startswith-prefix]] — MEDIUM, **RESOLVED 2026-05-27** — fixed via `Path.relative_to`
 - [[debt/evaluator-prompt-vs-adr-2-drift]] — LOW, **RESOLVED 2026-05-27** — ADR-2 reframed as two-track
+- [[debt/weasyprint-dyld-macos]] — LOW, **MITIGATED 2026-05-27** — DYLD_FALLBACK_LIBRARY_PATH set in runner scripts
 
 ## Analyses (1)
 
@@ -75,7 +76,7 @@ Not yet enumerated.
 ## Page types summary
 
 - `modules/` (12) · `apis/` (0) · `data-models/` (5) · `flows/` (1)
-- `decisions/` (8, 1 superseded) · `debt/` (6, 0 open) · `scaling/` (0) · `concepts/` (0)
+- `decisions/` (8, 1 superseded) · `debt/` (7, 0 open) · `scaling/` (0) · `concepts/` (0)
 - `analyses/` (1) · `architecture/system-map.md` (1) · `overview.md` (1)
 
-**Total maintained pages: 36** plus scaffolding (index, log, MILESTONES, SCHEMAS, WORKSHOP-GUIDE).
+**Total maintained pages: 37** plus scaffolding (index, log, MILESTONES, SCHEMAS, WORKSHOP-GUIDE).

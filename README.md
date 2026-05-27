@@ -52,6 +52,15 @@ If `workspace/papers/` has fewer than `--count` PDFs, T1 fetches the rest from a
 python -m app.main   # no --goal; reloads existing task graph
 ```
 
+### macOS Apple Silicon note
+
+T7 (PDF export via WeasyPrint) needs pango/cairo dylibs on `DYLD_FALLBACK_LIBRARY_PATH`. The shipped `./run_agent.sh` and `./reset_and_run.sh` set this automatically. If invoking `python -m app.main` directly:
+
+```bash
+export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:$DYLD_FALLBACK_LIBRARY_PATH
+brew install pango cairo  # one-time
+```
+
 ## Output
 
 - `workspace/project/papers/<id>/summary.json` — structured summary per paper

@@ -4,6 +4,55 @@ Append-only. Newest entries at top. Never edit past entries.
 
 ---
 
+## 2026-05-27 — update | Smoke run + WeasyPrint dyld fix
+
+Ran first end-to-end smoke after the backtest + 4-debt-closure session. Result: T1..T6 all PASS on first attempt; T7 fails on macOS Apple Silicon because pango/cairo dylibs at `/opt/homebrew/lib/` are not on the default `DYLD` search path for Python processes.
+
+### Smoke run
+
+```
+T1 PASS (score 100) | T2 PASS (score 100) | fanout T3.1, T3.2 injected
+T3.1 PASS (score 100) | T3.2 PASS (score 100)
+T4 PASS (score 100) | T5 PASS (score 100)
+T6 [AUTO_APPROVE=1] PASS (score 100)
+T7 FAIL (will retry, 1/2): FINAL_REPORT.pdf missing
+T7 NEEDS HUMAN: FINAL_REPORT.pdf missing (cap=2)
+```
+
+Per-task-type cap behavior verified — T7 escalates at cap=2 not cap=3.
+
+### Diagnosis
+
+`brew list pango cairo` shows libs installed. `ls /opt/homebrew/lib/libpango*` confirms presence. But:
+
+```
+$ .venv/bin/python -c "from weasyprint import HTML"
+# Fails — can't find libgobject etc
+
+$ DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib .venv/bin/python -c "from weasyprint import HTML; print('OK')"
+weasyprint OK
+```
+
+### Fix
+
+- `run_agent.sh` + `reset_and_run.sh` now `export DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}` before invoking `app.main`.
+- README §Usage adds a macOS Apple Silicon note + the env var snippet for direct `python -m app.main` callers.
+
+### New debt page
+
+[[debt/weasyprint-dyld-macos]] — LOW, status `mitigated`. Captures the dylib path issue + records the shell-level fix + lists cleaner long-term options (import-time env set, macOS detection).
+
+### Inventory after this update
+
+| | Before | After |
+|---|---|---|
+| Total maintained pages | 36 | 37 |
+| Debt open | 0 | 0 |
+| Debt mitigated | 0 | 1 |
+| Debt resolved/accepted | 6 | 6 |
+
+Pages touched: log, index, README.md, run_agent.sh, reset_and_run.sh, debt/weasyprint-dyld-macos (new).
+
 ## 2026-05-27 — update | Close remaining 4 debt items
 
 Closes the last 4 open debt items from the 2026-05-27 backtest. All 6 backtest-surfaced debt items now closed.
